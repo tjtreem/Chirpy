@@ -1,0 +1,90 @@
+package auth
+
+import (
+	"fmt"
+	"time"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+
+func HashPassword(password string) (string, error) {
+	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+	    return "", fmt.Errorf("Unable to hash password: %w", err)
+	}
+	return string(hashedPwd), nil
+}
+
+
+
+
+func CheckPasswordHash(password, hash string) error {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	if err != nil {
+	    return fmt.Errorf("Unable to verify hash: %w", err)
+	}
+
+	return nil
+
+}
+
+
+
+func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+	now := time.Now().UTC()
+	expires := now.Add(expiresIn)
+
+
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+	    Issuer:	"chirpy",
+	    IssuedAt:	jwt.NewNumericDate(now),
+	    ExpiresAt:	jwt.NewNumericDate(expires),
+	    Subject:	userID.String(),
+    	})
+
+	return token.SignedString([]byte(tokenSecret))
+
+}
+
+
+
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	claims := &jwt.RegisteredClaims{}
+
+	tok, err := jwt.ParseWithClaims(
+            tokenString,
+            claims,
+            func(token *jwt.Token) (interface{}, error) {
+		if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, fmt.Errorf("unexpected signing method: %s", token.Method.Alg())
+		}
+                return []byte(tokenSecret), nil
+            },
+	)
+
+	if err != nil {
+            return uuid.Nil, err
+    	}
+	
+	if !tok.Valid {
+	    return uuid.Nil, fmt.Errorf("invalid token")
+	}
+
+    	userIDString, err := claims.GetSubject()
+    	if err != nil {
+            return uuid.Nil, err
+    	}
+
+    	userID, err := uuid.Parse(userIDString)
+    	if err != nil {
+            return uuid.Nil, err
+    	}
+
+    	return userID, nil
+
+}
+
+
