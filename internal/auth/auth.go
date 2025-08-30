@@ -3,6 +3,11 @@ package auth
 import (
 	"fmt"
 	"time"
+	"errors"
+	"strings"
+	"net/http"
+	"crypto/rand"
+	"encoding/hex"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"github.com/golang-jwt/jwt/v5"
@@ -86,5 +91,50 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
     	return userID, nil
 
 }
+
+
+
+func GetBearerToken(headers http.Header) (string, error) {
+	val := headers.Get("Authorization")
+	if !strings.HasPrefix(val, "Bearer ") {
+	    return "", errors.New("missing or invalid authorization header")
+	}
+
+	token := strings.TrimSpace(strings.TrimPrefix(val, "Bearer "))
+	
+	if token == "" {
+	    return "", errors.New("missing or invalid authorization header")
+	}
+
+	return token, nil
+}
+
+
+
+func MakeRefreshToken() (string, error) {
+	key := make([]byte, 32)
+	err := rand.Read(key)
+	if err != nil {
+	    newErr := fmt.Errorf("Unable to create refresh token: %v", err)
+	    return "", newErr
+	}
+	
+	encodedStr := hex.EncodeToString(key)
+
+	return encodedStr, nil
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 

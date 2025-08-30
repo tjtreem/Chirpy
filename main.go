@@ -12,6 +12,7 @@ import (
 	"time"
 	_ "github.com/lib/pq"
 	"github.com/joho/godotenv"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/tjtreem/Chirpy/internal/database"
 	"github.com/tjtreem/Chirpy/internal/auth"
 
@@ -22,6 +23,7 @@ type apiConfig struct {
     fileserverHits	atomic.Int32
     db			*database.Queries
     platform		string
+    jwtSecret		string
 }
 
 type ChirpResponse struct {
@@ -177,8 +179,8 @@ func(cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handlerUserLogin(w http.ResponseWriter, r *http.Request) {
 	type loginParams struct {
-	    Email string `json:"email"`
-	    Password string `json:"password"`
+	    Email 		string	`json:"email"`
+	    Password 		string	`json:"password"`
 	}
 	
 	decoder := json.NewDecoder(r.Body)
@@ -195,6 +197,8 @@ func (cfg *apiConfig) handlerUserLogin(w http.ResponseWriter, r *http.Request) {
 	    respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
 	    return
 	}
+	
+	
 
 	err = auth.CheckPasswordHash(params.Password, dbUser.HashedPassword)
 	if err != nil {
@@ -202,18 +206,56 @@ func (cfg *apiConfig) handlerUserLogin(w http.ResponseWriter, r *http.Request) {
 	    return
 	}
 
-	type User struct {
-	    ID		uuid.UUID `json:"id"`
-	    CreatedAt	time.Time `json:"created_at"`
-	    UpdatedAt	time.Time `json:"updated_at"`
-	    Email	string	  `json:"email"`
+
+	dur := time.Hour
+	now := time.Now().UTC()
+
+	
+	claims := jwt.RegisteredClaims{
+	    Subject:	dbUser.ID.String(),
+	    IssuedAt:	jwt.NewNumericDate(now),
+	    ExpiresAt:	jwt.NewNumericDate(now.Add(dur)),
 	}
 
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(cfg.jwtSecret))
+	if err != nil {
+	    respondWithError(w, http.StatusInternalServerError, "couldn't sign token")
+	    return
+	}
+	
+	ref_token, err := MakeRefreshToken()
+	if err != nil {
+	    respondWithError(w, StatusInternalServerError, "unable to create refresh token")
+	}
+
+	dbRefreshToken, err := cfg.db.RefreshToken(r.Context(), database.RefreshTokenParams{
+	    Token:	ref_token,
+	    UserID:	dbUser.ID
+	})
+	
+	if err != nil {
+	    respondWithError(w, StatusInternalServerError, "unable to create refresh token")
+	    return
+	}
+
+
+	type User struct {
+	    ID		 uuid.UUID `json:"id"`
+	    CreatedAt	 time.Time `json:"created_at"`
+	    UpdatedAt	 time.Time `json:"updated_at"`
+	    Email	 string    `json:"email"`
+	    Token	 string    `json:"token"`
+	    RefreshToken string    `json:"refresh_token"`
+    	}
+
 	responseUser := User{
-	    ID:		dbUser.ID,
-	    CreatedAt:	dbUser.CreatedAt,
-	    UpdatedAt:	dbUser.UpdatedAt,
-	    Email:	dbUser.Email,
+	    ID:		  dbUser.ID,
+	    CreatedAt:	  dbUser.CreatedAt,
+	    UpdatedAt:	  dbUser.UpdatedAt,
+	    Email:	  dbUser.Email,
+	    Token:	  signed,
+	    RefreshToken: ref_token,
 	}
 
 	respondWithJSON(w, http.StatusOK, responseUser)
@@ -225,7 +267,6 @@ func (cfg *apiConfig) handlerUserLogin(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) handlerCreateChirps(w http.ResponseWriter, r *http.Request) {
 	type CreateChirpsParams struct {
 	    Body 	string		`json:"body"`
-	    UserID	uuid.UUID	`json:"user_id"`
 	}
 	
 	decoder := json.NewDecoder(r.Body)
@@ -243,11 +284,23 @@ func (cfg *apiConfig) handlerCreateChirps(w http.ResponseWriter, r *http.Request
 	}
 
 	cleaned := cleanProfanity(params.Body, []string{"kerfuffle", "sharbert", "fornax"})
-	
 
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+	    respondWithError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+	    return
+	}
+
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+	    respondWithError(w, http.StatusUnauthorized, "invalid or expired token")
+	    return
+	}
+
+	
 	dbChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 	    Body:	cleaned,
-    	    UserID:	params.UserID,
+    	    UserID:	userID,
     	})
 
 	if err != nil {
@@ -339,6 +392,11 @@ func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, r *http.Reque
 func main () {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	secret := os.Getenv("Secret")
+	if secret == "" {
+	    log.Fatal("missing Secret env var")
+	    return
+	}
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 	    fmt.Println("Error opening database")
@@ -354,6 +412,7 @@ func main () {
 	    fileserverHits:  atomic.Int32{},
 	    db: dbQueries,
 	    platform: os.Getenv("PLATFORM"),
+	    jwtSecret: secret,
 	}
 
 	mux := http.NewServeMux()
