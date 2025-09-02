@@ -113,7 +113,7 @@ func GetBearerToken(headers http.Header) (string, error) {
 
 func MakeRefreshToken() (string, error) {
 	key := make([]byte, 32)
-	err := rand.Read(key)
+	_, err := rand.Read(key)
 	if err != nil {
 	    newErr := fmt.Errorf("Unable to create refresh token: %v", err)
 	    return "", newErr
@@ -126,6 +126,27 @@ func MakeRefreshToken() (string, error) {
 }
 
 
+
+func GetAPIKey(h http.Header) (string, error) {
+	auth := h.Get("Authorization")
+	if auth == "" {
+	    return "", errors.New("missing or invalid authorization header")
+	}
+
+	const prefix = "ApiKey "
+
+	if !strings.HasPrefix(auth, prefix) {
+	    return "", errors.New("missing or invalid authorization header")
+	}
+
+	key := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+	if key == "" {
+	    return "", errors.New("missing or invalid authorization header")
+	}
+
+	return key, nil
+
+}
 
 
 

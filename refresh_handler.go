@@ -1,27 +1,29 @@
 package main
 
 import (
-	"fmt"
+	"time"
 	"net/http"
-	"errors"
+	"database/sql"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/tjtreem/Chirpy/internal/auth"
 )
 
 
 
 func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
-	token, err := GetBearerToken(r.Header)
+	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-	    respondWithError(w, StatusUnauthorized, "missing or invalid authorization header")
+	    respondWithError(w, http.StatusUnauthorized, "missing or invalid authorization header")
 	    return
 	}
 
 	dbGetUser, err := cfg.db.GetUserFromRefreshToken(r.Context(), token)
 	if err == sql.ErrNoRows {
-	    respondWithError(w, StatusUnauthorized, "token does not exist or is invalid")
+	    respondWithError(w, http.StatusUnauthorized, "token does not exist or is invalid")
 	    return
 	}
 	if err != nil {
-	    respondWithError(w, StatusInternalServerError, "unable to retrieve token")
+	    respondWithError(w, http.StatusInternalServerError, "unable to retrieve token")
 	    return
 	}
 
@@ -54,3 +56,21 @@ func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
 
 }
 
+
+
+func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+	    respondWithError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+	    return
+	}
+
+	err = cfg.db.RevokeToken(r.Context(), token)
+	if err != nil {
+	    respondWithError(w, http.StatusInternalServerError, "unable to revoke token")
+	    return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+
+}
